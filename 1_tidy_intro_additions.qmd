@@ -8,6 +8,8 @@ format:
       toc: true
 ---
 
+-   \textcolor{blue}{The lab questions and solutions are are the end of this lab document.}
+
 # By the end of this lab you should know the basics of
 
 -   RStudio Projects
@@ -294,7 +296,8 @@ dm |>
   filter(Age == 10 | Age == 20 | Age == 30 | Age == 40) |>
   ggplot(aes(x = Year, y = mf_ratio, color = Age)) +
   geom_line() +
-  labs(title = 'male/female mortality ratio over time for ages 10,20,30 and 40',
+  labs(title = 'male/female mortality ratio over time',
+       subtitle = "for ages 10,20,30 and 40",
        y = 'male/female mortality ratio') +
   theme_bw(base_size = 14) +
   scale_color_brewer(palette = "Set1")
@@ -340,7 +343,8 @@ dm |>
                values_to = 'weighted_rate') |>
   ggplot(aes(x = Year, y = weighted_rate, color = sex)) +
   geom_line() +
-  labs(title = 'weighted average mortality rate over year by sex',
+  labs(title = 'mortality rate over year',
+       subtitle = "weighted average & by sex",
        y = 'weighted averagr rate') +
   theme_bw(base_size = 14) +
   scale_color_brewer(palette = "Set1")
