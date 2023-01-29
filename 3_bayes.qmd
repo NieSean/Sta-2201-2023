@@ -51,7 +51,7 @@ cat("The (quantile-based) 95% credible interval is:", ci_q2, "\n")
 
 Now assume a Beta(10,10) prior on $\theta$. What is the interpretation of this prior? Are we assuming we know more, less or the same amount of information as the prior used in Question 2?
 
-  * The interpretation of this prior is that: for the distribution of theta, we are at the level of certainty as if we have already observed 10 successes and 10 fails. Therefore we are assuming that we know more information then the case of question 2 (20 observations worth of info here comparing to 2 observations worth of info in question 2).
+  * The interpretation of this prior is that: for the distribution of theta, we are at the level of certainty as if we have already observed 9 successes and 9 fails. Therefore we are assuming that we know more information then the case of question 2.
   
   * (Since this question does not ask for the estimation and credible interval, they are omitted. The calculation should be very similar to question 2.)
 
