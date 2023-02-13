@@ -1,0 +1,265 @@
+---
+title: "Week 5: Bayesian linear regression and introduction to Stan"
+date: today
+date-format: "DD/MM/YY"
+format: pdf
+execute: 
+  warning: false
+  message: false
+---
+
+# Introduction
+
+Today we will be starting off using Stan, looking at the kid's test score data set (available in resources for the [Gelman Hill textbook](https://mc-stan.org/rstanarm/reference/rstanarm-datasets.html)). 
+
+```{r}
+knitr::opts_chunk$set(warning = FALSE,
+                      echo = FALSE)
+library(tidyverse)
+library(rstan)
+library(tidybayes)
+library(here)
+```
+
+
+The data look like this:
+
+```{r, results=FALSE}
+kidiq <- read_rds(here("data","kidiq.RDS"))
+kidiq
+```
+As well as the kid's test scores, we have a binary variable indicating whether or not the mother completed high school, the mother's IQ and age. 
+
+
+# Descriptives
+
+## Question 1
+
+Use plots or tables to show three interesting observations about the data. Remember:
+
+- Explain what your graph/ tables show
+- Choose a graph type that's appropriate to the data type
+
+```{r}
+kidiq |>
+  ggplot() +
+  geom_point(aes(x = mom_iq, y = kid_score, color = as.factor(mom_hs)), size = 1) +
+  theme_bw() + 
+  ggtitle('Figure 1.1 Relationship between kids and moms IQ') +
+  labs(x = 'Moms IQ', y = 'Kids IQ', color = 'Mother high school or not') +
+  scale_color_discrete(labels = c('No (0)', 'Yes (1)'))
+```
+
+  * There appears to be a positive relationship between moms IQ and kids IQ. Also, mother with high school or above degree seems to be related to both higher moms IQ and kids IQ.
+
+```{r}
+kidiq |>
+  ggplot(aes(x = as.factor(mom_age),y = kid_score, color = as.factor(mom_hs)))+
+  geom_boxplot() +
+  theme_bw() + 
+  ggtitle('Figure 1.1 Relationship between kids IQ and moms age') +
+  labs(x = 'Moms age', y = 'Kids IQ', color = 'Mother high school or not') +
+  scale_color_discrete(labels = c('No (0)', 'Yes (1)'))
+```
+
+  * As for the relationship between kids' IQ and mothers' age, overall the relationship is not clear, but it does appear that for mothers age 20 or less, not having a high school degree is positively correlated with higher kids IQ, while for mothers age 21 or more, the reverse is true. Of course, this is without observing the kids' age, which can be an impactful factor.
+
+```{r}
+kidiq |>
+  ggplot(aes(x = as.factor(mom_age),y = mom_iq, color = as.factor(mom_hs)))+
+  geom_boxplot() +
+  theme_bw() + 
+  ggtitle('Figure 1.1 Relationship between kids IQ and moms age') +
+  labs(x = 'Moms age', y = 'Moms IQ', color = 'Mother high school or not') +
+  scale_color_discrete(labels = c('No (0)', 'Yes (1)'))
+```
+
+  * There appears to be a positive relationship between moms IQ and they finished high school or not.
+
+```{r}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 10
+
+# named list to input for stan function
+data <- list(y = y, 
+             N = length(y), 
+             mu0 = mu0,
+             sigma0 = sigma0)
+```
+
+```{r, results=FALSE}
+fit <- stan(file = here("code/models/kids2.stan"),
+            data = data,
+            chains = 3,
+            iter = 500)
+```
+
+## Question 2
+
+Change the prior to be much more informative (by changing the standard deviation to be 0.1). Rerun the model. Do the estimates change? Plot the prior and posterior densities. 
+
+```{r}
+y <- kidiq$kid_score
+mu0 <- 80
+sigma0 <- 0.1
+
+# named list to input for stan function
+data <- list(y = y, 
+             N = length(y), 
+             mu0 = mu0,
+             sigma0 = sigma0)
+```
+
+
+```{r, results=FALSE}
+fit1 <- stan(file = here("code/models/kids2.stan"),
+            data = data,
+            chains = 3,
+            iter = 500)
+```
+  * Previous fit:
+```{r}
+fit
+```
+
+  * Current fit:
+```{r}
+fit1
+```
+
+  * The estimate for mu is way closer to the prior mean 80 than the previous model (almost at 80 comparing to 86+). The estimate for sigma is also increased slightly by around 1.
+
+```{r}
+fit1  |> 
+  gather_draws(mu, sigma) |> 
+  filter(.variable == "mu") |> 
+  ggplot(aes(.value, color = "posterior")) + geom_density(size = 1) + 
+  xlim(c(78, 82)) + 
+  stat_function(fun = dnorm, 
+        args = list(mean = mu0, 
+                    sd = sigma0), 
+        aes(colour = 'prior'), size = 1) +
+  scale_color_manual(name = "", values = c("prior" = "red", "posterior" = "black")) + 
+  ggtitle("Prior and posterior for mean test scores") + 
+  xlab("score")
+  
+```
+
+```{r, results=FALSE}
+X <- as.matrix(kidiq$mom_hs, ncol = 1) # force this to be a matrix
+K <- 1
+
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit2 <- stan(file = here("code/models/kids3.stan"),
+            data = data, 
+            iter = 1000)
+```
+
+## Question 3
+
+a) Confirm that the estimates of the intercept and slope are comparable to results from `lm()` 
+
+  * Stan:
+```{r}
+fit2
+```
+
+  * Lm:
+```{r}
+mod2 <- lm(kid_score ~ mom_hs, data = kidiq)
+summary(mod2)
+```
+
+  * The estimates match fairly well for both intercept and slope.
+
+
+b) Do a `pairs` plot to investigate the joint sample distributions of the slope and intercept. Comment briefly on what you see. Is this potentially a problem?
+
+```{r}
+pairs(fit2, pars = c("alpha", "beta"))
+```
+
+  * The joint distribution has a much narrower when comparing to the previous one, potentially due to the mean of the variables are far away from the origin. This may make the algorithm harder to converge.
+
+## Question 4
+
+Add in mother's IQ as a covariate and rerun the model. Please  mean center the covariate before putting it into the model. Interpret the coefficient on the (centered) mum's IQ. 
+
+```{r, results=FALSE}
+kidiq |>
+  mutate(mom_iq = mom_iq - mean(mom_iq)) |> 
+  select(mom_hs, mom_iq)
+```
+
+
+```{r, results=FALSE}
+X <- as.matrix(kidiq |>
+  mutate(mom_iq = mom_iq - mean(mom_iq)) |> 
+  select(mom_hs, mom_iq)) # force this to be a matrix
+K <- 2
+
+data <- list(y = y, N = length(y), 
+             X =X, K = K)
+fit3 <- stan(file = here("code/models/kids3.stan"),
+            data = data, 
+            iter = 1000)
+```
+
+```{r}
+fit3
+```
+
+  * for every 1 score increase in the mom's IQ, the kid's IQ is expected to increase by 0.57.
+
+## Question 5 
+
+Confirm the results from Stan agree with `lm()`
+
+```{r}
+mod3 <- lm(kid_score ~ mom_hs + mom_iq, data = kidiq |>
+  mutate(mom_iq = mom_iq - mean(mom_iq)))
+summary(mod3)
+```
+
+  * The result indeed match for all beta hats.
+
+## Question 6
+
+Plot the posterior estimates of scores by education of mother for mothers who have an IQ of 110. 
+
+```{r}
+fit3 |>
+  spread_draws(alpha, beta[k], sigma) |>
+  pivot_wider(names_from = 'k', values_from = 'beta') |>
+  rename('b1' = '1', 'b2' = '2') |> 
+     mutate(nhs = alpha + b2*(110 - mean(kidiq$mom_iq)), # no high school is just the intercept
+          hs = alpha + b1 + b2*(110 - mean(kidiq$mom_iq))) |> 
+  select(nhs, hs) |> 
+  pivot_longer(nhs:hs, names_to = "education", values_to = "estimated_score") |> 
+  ggplot(aes(y = education, x = estimated_score)) +
+  stat_halfeye() + 
+  theme_bw() + 
+  ggtitle("Posterior estimates of scores by education level of mothers with 110 IQ")
+```
+
+## Question 7
+
+Generate and plot (as a histogram) samples from the posterior predictive distribution for a new kid with a mother who graduated high school and has an IQ of 95. 
+
+```{r}
+post_samples <- extract(fit3)
+sigma <- post_samples$sigma
+alpha <- post_samples$alpha
+b1 <- post_samples$beta[,1]
+b2 <- post_samples$beta[,2]
+iq_pred <- rnorm(n = length(sigma),mean = alpha + b1 + b2*(95 - mean(kidiq$mom_iq)), sd = sigma)
+hist(iq_pred)
+```
+
+
+
+
+
+

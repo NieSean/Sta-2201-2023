@@ -1,0 +1,354 @@
+---
+title: "STA2201H Winter 2023 Assignment 1"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    number_sections: yes
+fontsize: 11pt
+---
+
+**Due:** 11:59pm, 3 February 2023
+
+**What to hand in:** .qmd or .Rmd file and the compiled pdf
+
+**How to hand in:** Submit files via Quercus
+
+# Overdispersion
+
+Suppose that the conditional distribution of outcome $Y$ given an unobserved variable $\theta$ is Poisson, with a mean and variance $\mu\theta$, so
+
+$$
+Y|\theta \sim  \text{Poisson}(\mu\theta)
+$$
+
+a)  Assume $E(\theta) = 1$ and $Var(\theta) = \sigma^2$. Using the laws of total expectation and total variance, show $E(Y) = \mu$ and $Var(Y) = \mu (1+ \mu\sigma^2)$.
+b)  Assume $\theta$ is Gamma distributed with $\alpha$ and $\beta$ as shape and scale parameters, respectively. Show the unconditional distribution of $Y$ is Negative Binomial.
+c)  In order for $E(Y) = \mu$ and $Var(Y) = \mu (1+ \mu\sigma^2)$, what must $\alpha$ and $\beta$ equal?
+
+\newpage
+
+# Hurricanes
+
+In 2014 the following paper was published in PNAS:
+
+> Jung, K., Shavitt, S., Viswanathan, M., & Hilbe, J. M. (2014). Female hurricanes are deadlier than male hurricanes. Proceedings of the National Academy of Sciences, 111(24), 8782-8787.
+
+As the title suggests, the paper claimed that hurricanes with female names have caused a greater loss of life. In this question you will be investigating the data set used for the regression part of their analysis.
+
+You can download the data from the paper's supporting information here: <https://www.pnas.org/doi/10.1073/pnas.1402786111#supplementary-materials>
+
+You should skim the whole paper but you will probably find it useful to read the sections on the Archival Study in the most depth (both in the main text and 'Materials and Methods' section).
+
+a)  Create three graphs in ggplot that help to visualize patterns in deaths by femininity, minimum pressure, and damage. Discuss what you observe based on your visualizations.
+b)  Run a Poisson regression with `deaths` as the outcome and `femininity` as the explanatory variable. Interpret the resulting coefficient estimate. Check for overdispersion. If it is an issue, run a quasi-Poisson regression with the same variables. Interpret your results.
+c)  Reproduce Model 4 (as described in the text and shown in Table S2).[^1] Report the estimated effect of femininity on deaths assuming a hurricane with median pressure and damage ratings.
+d)  Using Model 4, predict the number of deaths caused by Hurricane Sandy. Interpret your results.
+e)  Describe at least two strengths and two weaknesses of this paper, focusing on the archival analysis. What was done well? What needed improvement?
+f)  Are you convinced by the results? If you are, explain why. If you're not, describe what additional data and/or analyses you would like to see to further test the author's hypothesis.
+
+[^1]: I was able to reproduce the coefficient estimates using the data available but the standard errors were slightly different, so don't worry if that is what you find.
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE)
+library(opendatatoronto)
+library(tidyverse)
+library(stringr)
+library(skimr) # EDA
+library(visdat) # EDA
+library(janitor)
+library(lubridate)
+library(ggrepel)
+Sys.setenv(lang = "en_US")
+```
+
+```{r}
+dat <- readxl::read_xlsx('pnas.1402786111.sd01.xlsx')
+```
+
+```{r}
+dat |>
+  slice_head(n=5)
+```
+
+
+\newpage
+
+# Vaccinations
+
+This question relates to COVID-19 vaccination rates in the United States. We are interested in exploring factors that are associated with differences in vaccine coverage by US county.
+
+-   You can download the latest data on vaccination coverage here: <https://data.cdc.gov/Vaccinations/COVID-19-Vaccinations-in-the-United-States-County/8xkx-amqh/data>. Note that this is updated most days so depending on when you download it, it might be slightly different from others (that's okay). For the purposes of the assignment, please consider data from the 11th of January 2023. Also note that on the same webpage you should be able to find a data dictionary. We will be interested in people who have completed a primary vaccine series (have second dose of a two-dose vaccine or one dose of a single-dose vaccine), which refers to columns that have the `Series_Complete` prefix.
+-   The class repo has a dataset `acs` that contain a range of different demographic, socioeconomic, and health variables by county. These were obtained from the American Community Survey (ACS) via the R package `tidycensus`. For reference, the extraction code can be found in the repo (`acs.R`)
+
+a)  Perform some exploratory data analysis (EDA) using a dataset combining the vaccination and ACS data, and summarize your observations with the aid of 3-4 key tables or graphs.
+b)  Build a regression model at the county level to help investigate patterns in the full vaccination rate for the population aged 18+ (that is, people aged 18+ who have completed a primary vaccine series). There is no one right answer here, but you should justify the outcome measure you are using (e.g. counts, proportions, rates, etc) and your distributional assumptions about the outcome measure (e.g. binary, poisson, normal, etc). You should also discuss briefly your model building strategy; what covariates you considered and why (motivated by your EDA)[^2], and how the candidate model was chosen. Interpret your findings, including visualizations where appropriate.
+c)  Use your model from b) to predict the proportion of the population aged 18+ in Ada County, Idaho. Briefly discuss how good you think this prediction is, and why.
+d)  Give a brief summary of your analysis. What other variables may be of interest to investigate in future?
+e)  Now consider the situation of analysing vaccination rates at the **state** level. Consider the three following options:
+    1)  Regression at the state level, outcome used is the total population 18+ fully vaccinated
+    2)  Regression at the state level, outcome used is the average of the county level full vaccination rates of 18+ population
+    3)  Regression at the county level, outcome used is the total population 18+ fully vaccinated, and include as a covariate a categorical variable (fixed effect) which indicates which state a county is in.
+
+[^2]: Note that the vaccines dataset also has a `Metro` variable which you are welcome to use in your analyses.
+
+> Without performing these regressions, briefly discuss how you think these three approaches would differ in terms of the granularity of information used and the type of outcome measure. In your opinion which is the most appropriate analysis, or does it depend on the question being asked?
+
+\newpage
+
+```{r}
+vac <- read.csv('q3_vac_data.csv')
+acs <- read.csv('acs.csv')
+acs_d <- readxl::read_xlsx('acs_dictionary.xlsx')
+```
+
+```{r}
+vac |>
+  slice_head(n = 5)
+```
+```{r}
+acs |>
+  slice_head(n = 5)
+```
+
+```{r}
+vac <- vac |>
+  janitor::clean_names() |>
+  mutate(fips = as.integer(fips))
+
+acs <- acs |>
+  pivot_wider(names_from = 'variable', values_from = 'value') |>
+  janitor::clean_names()
+```
+
+```{r}
+vac |> slice_head(n = 5)
+```
+
+```{r}
+acs |> slice_head(n = 5)
+```
+
+```{r}
+dat_q3 <- vac |>
+  left_join(acs, by = 'fips') |>
+  rename('series_complete_05plus' = 'series_complete_5plus') |>
+  rename('series_complete_05plus_pop_pct' = 'series_complete_5plus_pop_pct')
+```
+
+```{r}
+skim(dat_q3)
+```
+
+a.
+
+```{r}
+ggplot(data = dat_q3) +
+  geom_histogram(aes(x = series_complete_pop_pct)) +
+  theme_bw()
+```
+
+```{r}
+dat_q3 |>
+  select(series_complete_05plus,series_complete_12plus,series_complete_18plus,series_complete_65plus) |>
+  pivot_longer(series_complete_05plus:series_complete_65plus,
+               names_to = 'age_filtered',
+               values_to = 'population') |>
+  ggplot() +
+  geom_histogram(aes(x = population, fill = age_filtered), position = 'dodge', bins = 10) +
+  theme_bw()
+```
+
+```{r}
+dat_q3 |>
+  select(series_complete_05plus,series_complete_12plus,series_complete_18plus,series_complete_65plus) |>
+  pivot_longer(series_complete_05plus:series_complete_65plus,
+               names_to = 'age_filtered',
+               values_to = 'population') |>
+  ggplot() +
+  geom_histogram(aes(x = population, fill = age_filtered), position = 'dodge', bins = 20) +
+  theme_bw() +
+  scale_x_log10() +
+  xlab('log population')
+```
+
+```{r}
+dat_q3 |>
+  select(series_complete_05plus_pop_pct,series_complete_12plus_pop_pct,series_complete_18plus_pop_pct,series_complete_65plus_pop_pct) |>
+  pivot_longer(series_complete_05plus_pop_pct:series_complete_65plus_pop_pct,
+               names_to = 'age_filtered',
+               values_to = 'pop_pct') |>
+  ggplot() +
+  geom_histogram(aes(x = pop_pct, fill = age_filtered, order = age_filtered), position = 'dodge', bins = 20) +
+  theme_bw()
+```
+
+```{r}
+ggplot(data = dat_q3, aes(x = median_age, y = series_complete_pop_pct)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+ggplot(data = dat_q3, aes(x = prop_health_insurance, y = series_complete_pop_pct)) +
+  geom_point() +
+  theme_bw()
+```
+
+  * The log of series completed population for different cities is bell shaped, this can be related to the distribution of the total population of the cities.
+
+  * The percent of series completed across the cities is also bell shaped in general. However when we raise the filtering age (5+ to 12+ to 18+ to 65+), the distribution becomes more and more left skewed and denser at higher percentages. This becomes quite recognizable when filtered to 65+ only. (It may be more proper to calculate the percentage for age 5-11, 12-17, 18-64 and 65+ separately, but I think here the current graph draws a good enough picture to indicate that age may be worth looking at)
+
+  * So next I looked at the relationship between series completed percentage and median age of the city, but there does not appear to be a relationship between the 2 variables. It appears that the age effect becomes unrecognizable when only looking at the median.
+
+  * Next I looked at another potential predictor, health insurance, there appears to be a clear positive correlation between the two variables.
+
+
+b.
+
+```{r}
+acs |>
+  slice_head(n = 5)
+```
+
+  * Since we are investigating the patterns in 18+ full vaccination rate, I will use a logistic model here with 18+ full vaccination rate as outcome. As for predictors, since I have little technical knowledge about vaccination, ideally I should start with a full model and use model selection methods such as AIC or BIC to select several well fitted potential final models, then consult someone knowledgeable in vaccination to choose one as the final model. However, since this is an assignment and for demonstration purpose, I will pretend that I know something in vaccination, using information from the EDA and my common sense to select the "reasonable" predictors, then use the AIC method to select a final model.
+
+  * I decide to use prop_white, prop_foreign_born, median_age, median_income, prop_bachelor_above, prop_unemployed and prop_health_insurance as predictors before the AIC model selection.
+
+  * For predictors, it may be better to logistic transform the ratio predictors so that they match the transformation of the outcome variable and are easier to explain the relationships, however since some of them contain (and can reasonably contain) a ratio as low as 0.00, and I do not wish to lose these information after the logistic transform, they will be kept as their original form. For other variables, prop_less_than_hs is dropped because it is likely highly correlated to prop_bachelor_above, which we included, and prop_nilf is dropped for the same reason. For prop_low_ratio_ip, if my understanding of its description is correct, is potentially highly correlated to median_income, so it is also dropped. One more thing is to see if it is proper to log transform financial term median_income:
+
+```{r}
+ggplot(data = dat_q3, aes(x = median_income, y = series_complete_18plus_pop_pct)) +
+  geom_point() +
+  theme_bw()
+```
+  
+```{r}
+ggplot(data = dat_q3, aes(x = log(median_income), y = series_complete_18plus_pop_pct)) +
+  geom_point() +
+  theme_bw()
+```
+  
+  * Comparing the two plot, I think a log transformation on median_income is justifiable.
+
+  * It is worth noting here that after left joining the two table, for the same county, in rare cases, series_complete_18plus from vaccine table is bigger than total_pop_18plus from the acs table. This causes the glm(cbind(y, m - y) ~ .) binomial model to not function. Since the numbers are off, any attempt that mixes the population or population proportion data from the two tables is also not justifiable, so I used series_complete_18plus_pop_pct and series_complete_18plus from only the vaccine table to calculate y and m for the glm.
+
+```{r}
+dat_q3 |>
+  filter(series_complete_18plus > total_pop_18plus)
+```
+
+```{r}
+dat_q3_reg <- dat_q3 |>
+  mutate(log_median_income = log(median_income)) |>
+  mutate(total_18plus = as.integer(100*series_complete_18plus/series_complete_18plus_pop_pct)) |>
+  select(series_complete_18plus,total_18plus,prop_white,prop_foreign_born,prop_bachelor_above,prop_unemployed,prop_health_insurance,log_median_income,median_age)
+```
+
+```{r}
+dat_q3_reg |>
+  slice_head(n = 5)
+```
+
+```{r}
+q3_mod <- glm(cbind(series_complete_18plus, total_18plus - series_complete_18plus) ~ ., family = binomial, data = dat_q3_reg)
+```
+
+```{r}
+summary(q3_mod)
+```
+
+  * The model looks quite decent with all predictors being significant. So for the model selection process, I would just select this one as the final model base on the p-values. I will just double check using an automated step AIC method: 
+  
+```{r}
+q3_aic <- MASS::stepAIC(q3_mod, trace = FALSE)
+summary(q3_aic)
+```
+
+  * The results indeed match. This model is selected to be the final model.
+  
+  * Now for the findings, 
+
+```{r}
+cat('prop_white --',exp(0.1985820/100),'\n')
+cat('prop_foreign_born --',exp(2.8578692/100),'\n')
+cat('prop_bachelor_above --',exp(2.8058182/100),'\n')
+cat('prop_unemployed --',exp(6.5647581/100),'\n')
+cat('prop_health_insurance --',exp(2.2566244/100),'\n')
+cat('log_median_income --',exp(0.0228706),'\n')
+cat('median_age --',exp(0.0163254),'\n')
+```
+
+  * Due to the properties of the predictors, the interpretations of findings will differ slightly:
+
+$$
+\begin{aligned}
+rate:&\;e^{\beta(x+0.01)} = e^{\beta x}\cdot e^{0.01\beta} \\
+log:&\;e^{\beta\cdot log(x + 1)} = e^{\beta}(x+1) = e^{\beta}x+e^{\beta} \\
+basic:&\;e^{\beta(x+1)} = e^{\beta x}\cdot e^{\beta}
+\end{aligned}
+$$
+
+  * Every 1 percent increase in proportion of white population will multiply the odds ratio for 18+ full vaccination rate by roughly 1.002. Similarly, every 1 percent increase in proportion of 18+ population who are foreign born, proportion of population aged 25+ who have at least a bachelor degree, proportion of population age 16+ who are unemployed and proportion of population with health insurance multiplies the odds ratio for 18+ full vaccination rate by roughly 1.029, 1.028, 1.068 and 1.023 respectively.
+  
+    * Every 1 (2019 inflated adjusted) dollar increase the ratio by roughly 1.023, and every one year increase in median age multiply the ratio by roughly 1.016.
+
+| Predictor | Increment | Odds ratio for 18+ full vaccination rate |
+|:-----|:---:|:---:|
+| proportion white population | + 1% | x 1.001988 |
+| proportion foreign born | + 1% | x 1.028991 |
+| proportion at least bachelor | + 1% | x 1.028456 |
+| proportion unemployed | + 1% | x 1.06785 |
+| population health insurance | + 1% | x 1.022823 |
+| (inflated adjusted) median income | + 1$ | + 1.023134 |
+| median age | + 1yr | x 1.016459 |
+
+
+c.
+
+```{r}
+acs |>
+  filter(county_name == 'Ada County, Idaho')
+```
+
+```{r}
+ada <- acs |>
+  filter(county_name == 'Ada County, Idaho') |>
+  mutate(log_median_income = log(median_income)) |>
+  select(prop_white, prop_foreign_born, prop_bachelor_above, prop_unemployed, prop_health_insurance, log_median_income, median_age)
+
+q3_mod |> predict(ada, type = "response", se.fit = TRUE)
+```
+
+  * The predicted value is 0.7403, which is 74.03%. se.fit is quite small, so I expect the prediction to be decent. A comparison with the recorded percentage from the vaccine data, 76.9%, also seems very acceptable.
+  
+```{r}
+vac |>
+  filter(fips == 16001) |>
+  select(series_complete_18plus_pop_pct)
+```
+
+
+d. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
