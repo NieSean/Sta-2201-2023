@@ -1,0 +1,269 @@
+---
+title: "Research Proposal"
+format: pdf
+execute: 
+  warning: false
+  message: false
+  echo: false
+---
+
+```{r}
+library(tidyverse)
+library(here)
+library(skimr)
+# for bayes stuff
+library(rstan)
+library(bayesplot) 
+library(loo) 
+library(tidybayes) 
+```
+
+```{r}
+d <- read_csv(here("data/austin-animal-center-statistics-oct-1-2013-to-dec-7-2017-QueryResult (25).csv"))
+```
+
+\newpage
+
+# Dataset
+
+The data used is the animal shelter outcome data for City of Austin Animal Center from October 1, 2013 to December 7, 2017. The data is from [data.world](https://data.world/siyeh/austin-animal-center-statistics-oct-1-2013-to-dec-7-2017). The dataset contains 13 variables: animal's ID, name, birth date, type, sex age, breed and color; outcome's type, sub type and date.
+
+# Research Question
+
+The research question is what variables affect the adoption chance of a sheltered animal, and what is the coefficient of these variables. In particular, I have the hypotheses that adoption chance is affected by animals' age, sex, type, as well as adoption date (people are more likely to adopt animals in more modern days). It is an interesting research question because animals are cute. Also animal adoption have important ethical implications, and can affect multiple disciplines such as sociology, psychology and public health.
+
+The method will be a logistic model through Bayesian regression using R and stan. A detailed draft model is appended after the EDA.
+
+# Data Cleaning
+
+```{r, results='hide'}
+skim(d)
+```
+
+- There are animals that has been intaken multiple times. 63388 animals have been intaken uniquely 1 time, 4584 animals have been intaken 2 times, 760 animals have been intaken 3 times, 175 animals have been intaken 4 times, 92 animals have been intaken 5 times or more. For the multiple intakes animals, only the first intake is kept.
+
+- This report will focus on cats and dogs, as they are the more common pets for households, the dataset is then filtered to be only cats and dog.
+
+```{r}
+dat <- d[!duplicated(d$animal_id),] |>
+  filter(animal_type %in% c("Cat", "Dog")) |>
+  mutate(type = factor(as.factor(animal_type), levels = c("Cat", "Dog"))) |>
+  select(c(-animal_type))
+```
+
+- Animals' sex will be a candidate predictor of the model, and rows with unknown or null sex are dropped.
+
+```{r}
+dat <- dat |>
+  filter(sex_upon_outcome %in% c("Intact Female", "Spayed Female", "Intact Male", "Neutered Male")) |>
+  mutate(sex = factor(as.factor(sex_upon_outcome), levels = c("Intact Female", "Spayed Female", "Intact Male", "Neutered Male"))) |>
+  select(c(-sex_upon_outcome))
+```
+
+- These leaves us with 61778 rows of data.
+
+```{r, results='hide'}
+head(unique(dat$breed), n=20)
+```
+
+```{r, results='hide'}
+head(unique(dat$color), n=20)
+```
+
+- There are 2101 unique breed values and 519 unique color values, but many are correlated or have some level of subjectivity. For example breed "Pit Bull" and "Pit Bull Mix", or color "Black/Brown" and "Black/Tan". Due to the sizes, correlations and potential interpretation difficulties, I decided to not include these two variables.
+
+- This means that even when two animals are both dog, their expected outcome may differ due to the unincluded breeds and colors.
+
+- So instead, I decided to capture the variability of different breeds and colors using a heretical structure for the coefficient $\beta_{type}$ of the factor variable animal type:
+
+$$
+logit(\pi) = \beta_0 + \beta_{type} + ...
+$$
+
+- $\beta_{type}$ will be heretically structured and drew from $N(\mu_{cat}, \sigma_{cat})$ for cat type, and drew from $N(\mu_{dog}, \sigma_{dog})$ for dog type animals.
+
+```{r}
+dat <- dat |>
+  select(c(-breed, -color))
+```
+
+- For animals' age, variable "age_upon_outcome" is the animals age in either years, months or days; and variable "age" is the age of the animal all converted in days, which is more accurate and is the one kept.
+
+```{r}
+dat <- dat |>
+  select(c(-age_upon_outcome)) |>
+  filter(age >= 0)
+```
+
+- As for the outcome of the animals, unique outcome_type are as follows:
+
+```{r}
+unique(dat$outcome_type)
+```
+
+- 2 rows of NA are dropped. Then values "Return to Owner", "Adoption" and "Rto-Adopt" (return to owner - adopt) are merged into value 1 (adopted), and the rest of the values are merged into 0 (not adopted).
+
+- outcome_subtype are most missing values as shown from the data skim at the beginning, and therefore is dropped.
+
+```{r}
+dat <- dat |>
+  filter(!is.na(outcome_type)) |>
+  mutate(outcome = ifelse(outcome_type %in% c("Return to Owner", "Adoption", "Rto-Adopt"), 1, 0)) |>
+  select(c(-outcome_type, -outcome_subtype))
+```
+
+- Animal ID and name are then dropped as they will not be used as predictors in the model. Data of Birth is also dropped as it is collinear with age.
+
+```{r}
+dat <- dat |>
+  select(c(-animal_id, -name, -date_of_birth))
+```
+
+- As for the candidate predictor adoption date, since there are only 4 years (2013 - 2017) of data, I decided to index the time by month and code month 2013/10 to 2017/12 to be month 1 to 51, there are no missing months in between.
+
+- The final dataset contains animals' type, sex and age and the corresponding outcome and outcome date.
+
+```{r}
+dat <- dat |>
+  mutate(outcome_month = as.integer(as.factor(monthyear))) |>
+  select(c(type, sex, age, outcome_month, outcome))
+```
+
+```{r, results='hide'}
+skim(dat)
+```
+
+# EDA
+
+```{r}
+set.seed(222)
+
+dat |>
+  group_by(sex, type) |>
+  slice_sample(n=1000) |>
+  ggplot(aes(x = sex, y = type, color = as.factor(outcome))) +
+  geom_point(size = 1, alpha = 0.3,position=position_jitter(h=0.3, w=0.3)) +
+  theme_bw() +
+  labs(title = "Adoption Situation across Animal Type and Sex", color = "If Adopted") +
+  scale_color_discrete(labels = c('No', 'Yes')) 
+```
+
+- Spaying/Neutering greatly increases the chance of an animal getting adopted.
+
+- When not spayed/neutered, dogs are more likely to be adopted than cats. When spayed/neutered, the adoption rate is not visually different for cats and dogs.
+
+```{r}
+dat |>
+  mutate(bin = ntile(age, 10)) |> 
+  mutate(bin = paste0(bin-1,"0 -",  bin,"0%")) |>
+  ggplot(aes(x = as.factor(outcome))) +
+  geom_bar(fill = "turquoise", color = "black") +
+  facet_wrap(~bin, nrow = 1) +
+  labs(title = "Adopted (1) vs Not Adopted (0) across Age Quantiles", x = "Not Adopted (0) vs Adopted (1)")
+```
+
+- For animals with extremely young ages (the youngest 10%), the adoption rate is very low.
+
+- For the rest of the ages, the adoption rate starts high for young animals, then gradually decreases as animals' age increase, until reaching the 50% age quantile, when the adoption rate starts to remain about constant.
+
+- Base on the plot, the youngest 10% animals is excluded from the model data, resulting in 5.5k + rows of data in the dataset.
+
+```{r}
+dat <- dat |>
+  mutate(bin = ntile(age, 10)) |>
+  filter(bin != 1) |>
+  select(c(type, sex, age, outcome_month, outcome))
+```
+
+```{r}
+dat |>
+  group_by(outcome_month, type) |>
+  summarise(adp_rate = mean(outcome)) |>
+  ggplot(aes(x = outcome_month, y = adp_rate, color = type)) +
+  geom_point() + 
+  theme_bw() +
+  labs(title = "Adoption Rate vs Adoption Month", x = "Adoption Month", y = "Adoption Rate")
+```
+
+- The adoption rate goes up as month increases.
+
+- Dogs have higher adoption rates than cats at almost all month values.
+
+# Appendix: A Draft Model
+
+$$
+Logit(\pi_i) = \beta_0 + \beta_{type,i} + \beta_{sex,i} + \beta_{age}\cdot age_i + \beta_{month}\cdot month_i
+$$
+
+Where type can be either cat or dog, and:
+
+$$
+\beta_{type,i} \sim N(\mu_{cat}, \sigma_{cat}) \text{,  for cat}
+$$
+$$
+\beta_{type,i} \sim N(\mu_{dog}, \sigma_{dog}) \text{,  for dog}
+$$
+
+Similarly, sex can be intact female, spayed female, intact male or neutered male, and:
+
+for intact female or spayed female,
+
+$$
+\beta_{sex,i} \sim N(\mu_{female}, \sigma_{female})
+$$
+
+for intact male or neutered male,
+
+$$
+\beta_{sex,i} \sim N(\mu_{male}, \sigma_{male})
+$$
+
+- I don't have the technical knowledge about if spayed for female and neutered for male are equivalent and can be considered to have the same effect, so I decided to leave them within the sex factor instead of extract them out as a separate factor of intact or not.
+
+```{r}
+set.seed(222)
+
+dat_samp <- dat |>
+  sample_n(1500)
+
+stan_data <- list(N_data = nrow(dat_samp),
+                  N_sex = nlevels(dat_samp$sex),
+                  N_type = nlevels(dat_samp$type),
+                  y = dat_samp$outcome,
+                  sex = as.integer(dat_samp$sex),
+                  type = as.integer(dat_samp$type),
+                  month = dat_samp$outcome_month,
+                  age = dat_samp$age)
+```
+
+```{r, results='hide'}
+mod0 <- stan(data = stan_data, 
+             file = here("code/models/mod_draft.stan"),
+             seed = 314)
+```
+
+- The coefficients are as follows:
+
+```{r}
+summary(mod0)$summary[1:17,]
+```
+
+```{r}
+traceplot(mod0)
+```
+
+```{r}
+pairs(mod0, pars = c("beta_0", "beta_age"))
+```
+
+```{r}
+pairs(mod0, pars = c("mu_cat", "mu_dog","sigma_cat", "sigma_dog"))
+```
+
+```{r}
+pairs(mod0, pars = c("mu_female", "mu_male","sigma_female", "sigma_male"))
+```
+
+
+
+
