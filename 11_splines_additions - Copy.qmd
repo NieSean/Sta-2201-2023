@@ -1,0 +1,236 @@
+---
+title: "Week 11: Splines"
+date: today
+date-format: "DD/MM/YY"
+format: pdf
+execute: 
+  warning: false
+  message: false
+---
+
+# Overview
+
+In this lab you'll be fitting a second-order P-Splines regression model to foster care entries by state in the US, projecting out to 2030. 
+
+```{r}
+library(tidyverse)
+library(here)
+library(rstan)
+library(tidybayes)
+source(here("code/getsplines.R"))
+```
+
+Here's the data
+
+```{r}
+d <- read_csv(here("data/fc_entries.csv"))
+```
+
+## Question 1
+
+Make a plot highlighting trends over time by state. Might be a good opportunity to use `geofacet`. Describe what you see in a couple of sentences. 
+
+
+```{r}
+library(geofacet)
+```
+
+```{r}
+d |> 
+  ggplot(aes(year, ent_pc)) + 
+  geom_line()+
+  facet_geo(~state, scales = "free_y")
+
+```
+
+
+## Question 2
+
+Fit a hierarchical second-order P-Splines regression model to estimate the (logged) entries per capita over the period 2010-2017. The model you want to fit is
+
+$$
+\begin{aligned}
+y_{st} &\sim N(\log \lambda_{st}, \sigma^2_{y,s})\\
+\log \lambda_{st} &= \alpha_kB_k(t)\\
+\Delta^2\alpha_k &\sim N(0, \sigma^2_{\alpha,s})\\
+\log \sigma_{\alpha,s} &\sim N(\mu_{\sigma}, \tau^2)
+\end{aligned}
+$$
+Where $y_{s,t}$ is the logged entries per capita for state $s$ in year $t$. Use cubic splines that have knots 2.5 years apart and are a constant shape at the boundaries. Put standard normal priors on standard deviations and hyperparameters. 
+
+
+```{r}
+years <- unique(d$year)
+N <- length(years)
+y <- log(d |> 
+  select(state, year, ent_pc) |> 
+  pivot_wider(names_from = "state", values_from = "ent_pc") |> 
+  select(-year) |> 
+  as.matrix())
+
+res <- getsplines(years, 2.5)
+B <- res$B.ik
+K <- ncol(B)
+
+stan_data <- list(N = N, y = y, K = K, S = length(unique(d$state)),
+                  B = B)
+
+mod <- stan(data = stan_data, file = "code/models/lab11.stan")
+```
+
+- Summary of the first few alphas:
+
+```{r}
+summary(mod)$summary[1:3,]
+```
+
+
+## Question 3
+
+Project forward entries per capita to 2030. Pick 4 states and plot the results (with 95% CIs). Note the code to do this in R is in the lecture slides. 
+
+```{r}
+proj_years <- 2018:2030
+# Note: B.ik are splines for in-sample period
+# has dimensions i (number of years) x k (number of knots)
+# need splines for whole period
+B.ik_full <- getsplines(c(years, proj_years),2.5)$B.ik
+
+K <- ncol(B) # number of knots in sample
+K_full <- ncol(B.ik_full) # number of knots over entire period
+proj_steps <- K_full - K # number of projection steps
+
+alphas <- extract(mod)[["alpha"]]
+sigmas <- extract(mod)[["sigma_alpha"]] # sigma_alpha
+sigma_ys <- extract(mod)[["sigma_y"]]
+nsims <- nrow(alphas)
+
+states <- unique(d$state)
+
+alphas_proj <- array(NA, c(nsims, proj_steps, length(states)))
+
+set.seed(1098)
+# project the alphas
+for(j in 1:length(states)){
+  first_next_alpha <- rnorm(n = nsims,
+                            mean = 2*alphas[,K,j] - alphas[,K-1,j],
+                            sd = sigmas[,j])
+  second_next_alpha <- rnorm(n = nsims,
+                             mean = 2*first_next_alpha - alphas[,K,j],
+                             sd = sigmas[,j])
+  alphas_proj[,1,j] <- first_next_alpha
+  alphas_proj[,2,j] <- second_next_alpha
+# now project the rest
+  for(i in 3:proj_steps){ #!!! not over years but over knots
+    alphas_proj[,i,j] <- rnorm(n = nsims,
+                               mean = 2*alphas_proj[,i-1,j] - alphas_proj[,i-2,j],
+                               sd = sigmas[,j])
+  }
+}
+# now use these to get y
+y_proj <- array(NA, c(nsims, length(proj_years), length(states)))
+for(i in 1:length(proj_years)){ # now over years
+  for(j in 1:length(states)){
+    all_alphas <- cbind(alphas[,,j], alphas_proj[,,j] )
+    this_lambda <- all_alphas %*% as.matrix(B.ik_full[length(years)+i, ])
+    y_proj[,i,j] <- rnorm(n = nsims, mean = this_lambda, sd = sigma_ys[,j])
+  }
+}
+```
+
+- Pick California, Mississippi, Ohio and Texas as in the slide:
+
+```{r}
+for(s in c("California", "Mississippi", "Ohio", "Texas")){
+  cat("Index of ", s, ":", which(states == s), "\n")
+}
+```
+
+```{r}
+y_pred <- data.frame(year = proj_years,
+                     ca_val = sapply(data.frame(y_proj[,,5]),median),
+                     ca_upr = sapply(data.frame(y_proj[,,5]),quantile, probs = 0.975),
+                     ca_lowr = sapply(data.frame(y_proj[,,5]),quantile, probs = 0.025),
+                     mi_val = sapply(data.frame(y_proj[,,25]),median),
+                     mi_upr = sapply(data.frame(y_proj[,,25]),quantile, probs = 0.975),
+                     mi_lowr = sapply(data.frame(y_proj[,,25]),quantile, probs = 0.025),
+                     oh_val = sapply(data.frame(y_proj[,,36]),median),
+                     oh_upr = sapply(data.frame(y_proj[,,36]),quantile, probs = 0.975),
+                     oh_lowr = sapply(data.frame(y_proj[,,36]),quantile, probs = 0.025),
+                     te_val = sapply(data.frame(y_proj[,,44]),median),
+                     te_upr = sapply(data.frame(y_proj[,,44]),quantile, probs = 0.975),
+                     te_lowr = sapply(data.frame(y_proj[,,44]),quantile, probs = 0.025)) |> 
+  pivot_longer(ca_val:te_lowr,
+               names_to = c("state", ".value"),
+               names_pattern = "(.+)_(.+)") |>
+  mutate(val = exp(val),
+         upr = exp(upr),
+         lowr = exp(lowr))
+```
+
+```{r}
+head(y_pred)
+```
+
+```{r}
+y_modl <- mod |>
+  gather_draws(mu[n,s]) |>
+  median_qi() |>
+  filter(s %in% c(5,25,36,44)) |>
+  mutate(year = n + 2009,
+         state = case_when(s == 5 ~ "ca",
+                           s == 25 ~ "mi",
+                           s == 36 ~ "oh",
+                           s == 44 ~ "te"),
+         val = exp(.value),
+         upr = exp(.upper),
+         lowr = exp(.lower)) |>
+  dplyr::select(year, state, val, upr, lowr)
+```
+
+- Projection without CI:
+
+```{r}
+d |>
+  filter(state %in% c("California", "Mississippi", "Ohio", "Texas"))|>
+  ggplot(aes(year, ent_pc, color = state)) +
+  geom_point() +
+  geom_line(data = y_modl,aes(year,val)) +
+  geom_line(data = y_pred,aes(year,val))
+```
+
+- Projection with CI:
+
+```{r}
+d |>
+  filter(state %in% c("California", "Mississippi", "Ohio", "Texas"))|>
+  ggplot(aes(year, ent_pc, color = state)) +
+  geom_point() +
+  geom_line(data = y_modl,aes(year,val)) +
+  geom_ribbon(data = y_modl, aes(y = val, ymin = lowr, ymax = upr, fill = state), alpha = 0.2, colour = NA) +
+  geom_line(data = y_pred,aes(year,val)) +
+  geom_ribbon(data = y_pred, aes(y = val, ymin = lowr, ymax = upr, fill = state), alpha = 0.2, colour = NA)
+```
+
+- Projection with CI zoomed in:
+
+```{r}
+d |>
+  filter(state %in% c("California", "Mississippi", "Ohio", "Texas"))|>
+  ggplot(aes(year, ent_pc, color = state)) +
+  geom_point() +
+  geom_line(data = y_modl,aes(year,val)) +
+  geom_ribbon(data = y_modl, aes(y = val, ymin = lowr, ymax = upr, fill = state), alpha = 0.15, colour = NA) +
+  geom_line(data = y_pred,aes(year,val)) +
+  geom_ribbon(data = y_pred, aes(y = val, ymin = lowr, ymax = upr, fill = state), alpha = 0.15, colour = NA)  +
+  coord_cartesian(ylim = c(0, 20)) 
+```
+
+## Question 4 (bonus)
+
+P-Splines are quite useful in structural time series models, when you are using a model of the form 
+$$
+f(y_t) = \text{systematic part} + \text{time-specific deviations}
+$$
+where the systematic part is model with a set of covariates for example, and P-splines are used to smooth data-driven deviations over time. Consider adding covariates to the model you ran above. What are some potential issues that may happen in estimation? Can you think of an additional constraint to add to the model that would overcome these issues?
+
